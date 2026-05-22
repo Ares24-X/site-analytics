@@ -1,251 +1,311 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Site, CachedData, AnalyticsData } from '@/lib/types'
-import { getSite } from '@/lib/storage'
-import { getCachedData } from '@/lib/cache'
 
-function SiteDetailContent() {
-  const searchParams = useSearchParams()
-  const siteId = searchParams.get('id')
-  
-  const [site, setSite] = useState<Site | null>(null)
-  const [cachedData, setCachedData] = useState<CachedData | null>(null)
+const WORKER_URL = 'https://site-analytics-worker.rmgtlrx.workers.dev'
+
+interface SiteData {
+  id: string
+  name: string
+  domain: string
+  date: string
+  ga4: {
+    sessions: number
+    activeUsers: number
+    pageViews: number
+    avgSessionDuration: number
+    bounceRate: number
+    topPages: { path: string; views: number }[]
+    topCountries: { country: string; users: number }[]
+    trafficSources: { source: string; sessions: number }[]
+    devices: { device: string; users: number }[]
+  }
+  gsc: {
+    clicks: number
+    impressions: number
+    ctr: number
+    avgPosition: number
+    topQueries: { query: string; clicks: number; impressions: number; ctr: number; position: number }[]
+    topPages: { page: string; clicks: number; impressions: number; ctr: number; position: number }[]
+  }
+}
+
+export default function SiteDetailPage() {
+  const [siteId, setSiteId] = useState<string>('')
+  const [siteData, setSiteData] = useState<SiteData | null>(null)
+  const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!siteId) {
-      setLoading(false)
-      return
+    const params = new URLSearchParams(window.location.search)
+    const id = params.get('id')
+    if (id) {
+      setSiteId(id)
+      fetchSiteData(id, date)
     }
+  }, [date])
 
-    const siteData = getSite(siteId)
-    setSite(siteData)
-    
-    if (siteData) {
-      const cached = getCachedData(siteId)
-      setCachedData(cached)
+  const fetchSiteData = async (id: string, dataDate: string) => {
+    try {
+      setLoading(true)
+      const response = await fetch(`${WORKER_URL}/api/data?date=${dataDate}`)
+      if (!response.ok) throw new Error('Failed to fetch data')
+      const result = await response.json()
+      const site = result.sites.find((s: SiteData) => s.id === id)
+      if (site) {
+        setSiteData(site)
+      } else {
+        setSiteData(null)
+      }
+    } catch (err) {
+      setError('无法加载数据')
+    } finally {
+      setLoading(false)
     }
-    
-    setLoading(false)
-  }, [siteId])
+  }
+
+  const formatDuration = (seconds: number) => {
+    const m = Math.floor(seconds / 60)
+    const s = Math.floor(seconds % 60)
+    return `${m}m ${s}s`
+  }
+
+  // 获取最近7天的日期
+  const getLast7Days = () => {
+    const dates = []
+    for (let i = 0; i < 7; i++) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      dates.push(d.toISOString().split('T')[0])
+    }
+    return dates
+  }
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="text-center py-12">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
           <p className="mt-4 text-gray-500">加载中...</p>
         </div>
       </div>
     )
   }
 
-  if (!siteId || !site) {
+  if (!siteData) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="text-center py-12 bg-white rounded-lg shadow">
-          <svg
-            className="mx-auto h-12 w-12 text-gray-400"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
-          <h3 className="mt-2 text-sm font-medium text-gray-900">站点未找到</h3>
-          <p className="mt-1 text-sm text-gray-500">请检查 URL 参数是否正确</p>
-          <div className="mt-6">
-            <Link
-              href="/"
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700"
-            >
-              返回仪表板
-            </Link>
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        <Link href="/" className="text-blue-600 hover:underline">← 返回仪表板</Link>
+        <div className="mt-8 text-center py-12 bg-white rounded-lg shadow">
+          <p className="text-gray-500">该日期暂无数据</p>
+          <div className="mt-4 flex justify-center gap-2">
+            {getLast7Days().map(d => (
+              <button
+                key={d}
+                onClick={() => setDate(d)}
+                className={`px-3 py-1 rounded text-sm ${
+                  d === date ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {d.slice(5)}
+              </button>
+            ))}
           </div>
         </div>
       </div>
     )
   }
 
-  const data: AnalyticsData = cachedData?.data || {
-    pageViews: 0,
-    visitors: 0,
-    sessions: 0,
-    bounceRate: 0,
-    avgSessionDuration: 0,
-    topPages: [],
-    topReferrers: [],
-    deviceStats: [],
-    dailyStats: [],
-  }
-
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* 返回按钮和标题 */}
-      <div className="mb-8">
-        <Link
-          href="/"
-          className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700 mb-4"
-        >
-          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          返回仪表板
-        </Link>
-        <h1 className="text-3xl font-bold text-gray-900">{site.name}</h1>
-        <p className="mt-2 text-gray-600">{site.url}</p>
-      </div>
-
-      {/* 概览卡片 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <StatCard title="页面浏览量" value={data.pageViews.toLocaleString()} />
-        <StatCard title="访客数" value={data.visitors.toLocaleString()} />
-        <StatCard title="会话数" value={data.sessions.toLocaleString()} />
-        <StatCard title="跳出率" value={`${(data.bounceRate * 100).toFixed(1)}%`} />
-      </div>
-
-      {/* 详细统计 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 热门页面 */}
-        <div className="bg-white shadow rounded-lg">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-900">热门页面</h2>
+    <div className="max-w-7xl mx-auto px-4 py-8">
+      {/* Header */}
+      <div className="mb-6">
+        <Link href="/" className="text-blue-600 hover:underline text-sm">← 返回仪表板</Link>
+        <div className="mt-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">{siteData.name}</h1>
+            <p className="text-gray-500">{siteData.domain}</p>
           </div>
-          <div className="px-6 py-4">
-            {data.topPages.length === 0 ? (
-              <p className="text-gray-500 text-center py-4">暂无数据</p>
-            ) : (
-              <ul className="divide-y divide-gray-200">
-                {data.topPages.map((page, index) => (
-                  <li key={index} className="py-3 flex justify-between">
-                    <span className="text-sm text-gray-900 truncate">{page.path}</span>
-                    <span className="text-sm text-gray-500 ml-4">{page.views.toLocaleString()} 次浏览</span>
-                  </li>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-500">选择日期:</span>
+            <select
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="border rounded-lg px-3 py-1 text-sm"
+            >
+              {getLast7Days().map(d => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <p className="text-sm text-gray-400 mt-1">数据日期: {siteData.date}</p>
+      </div>
+
+      {/* Overview Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div className="bg-white p-4 rounded-lg shadow">
+          <div className="text-gray-500 text-sm">Sessions</div>
+          <div className="text-2xl font-bold text-gray-900">{siteData.ga4.sessions.toLocaleString()}</div>
+        </div>
+        <div className="bg-white p-4 rounded-lg shadow">
+          <div className="text-gray-500 text-sm">Users</div>
+          <div className="text-2xl font-bold text-gray-900">{siteData.ga4.activeUsers.toLocaleString()}</div>
+        </div>
+        <div className="bg-white p-4 rounded-lg shadow">
+          <div className="text-gray-500 text-sm">Clicks</div>
+          <div className="text-2xl font-bold text-gray-900">{siteData.gsc.clicks.toLocaleString()}</div>
+        </div>
+        <div className="bg-white p-4 rounded-lg shadow">
+          <div className="text-gray-500 text-sm">Impressions</div>
+          <div className="text-2xl font-bold text-gray-900">{siteData.gsc.impressions.toLocaleString()}</div>
+        </div>
+      </div>
+
+      {/* GA4 Details */}
+      <div className="bg-white rounded-lg shadow p-6 mb-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">GA4 详细数据</h2>
+        <div className="grid md:grid-cols-2 gap-6">
+          <div>
+            <h3 className="font-medium text-gray-700 mb-2">概览</h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Sessions</span>
+                <span className="font-medium">{siteData.ga4.sessions.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Active Users</span>
+                <span className="font-medium">{siteData.ga4.activeUsers.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Page Views</span>
+                <span className="font-medium">{siteData.ga4.pageViews.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Avg Duration</span>
+                <span className="font-medium">{formatDuration(siteData.ga4.avgSessionDuration)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Bounce Rate</span>
+                <span className="font-medium">{siteData.ga4.bounceRate.toFixed(1)}%</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="font-medium text-gray-700 mb-2">热门页面</h3>
+            {siteData.ga4.topPages?.length > 0 ? (
+              <div className="space-y-2 text-sm">
+                {siteData.ga4.topPages.slice(0, 5).map((page, i) => (
+                  <div key={i} className="flex justify-between">
+                    <span className="text-gray-600 truncate max-w-[200px]">{page.path}</span>
+                    <span className="font-medium">{page.views}</span>
+                  </div>
                 ))}
-              </ul>
+              </div>
+            ) : (
+              <p className="text-gray-400 text-sm">暂无数据</p>
+            )}
+          </div>
+
+          <div>
+            <h3 className="font-medium text-gray-700 mb-2">流量来源</h3>
+            {siteData.ga4.trafficSources?.length > 0 ? (
+              <div className="space-y-2 text-sm">
+                {siteData.ga4.trafficSources.slice(0, 5).map((source, i) => (
+                  <div key={i} className="flex justify-between">
+                    <span className="text-gray-600">{source.source}</span>
+                    <span className="font-medium">{source.sessions}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-gray-400 text-sm">暂无数据</p>
+            )}
+          </div>
+
+          <div>
+            <h3 className="font-medium text-gray-700 mb-2">国家/地区</h3>
+            {siteData.ga4.topCountries?.length > 0 ? (
+              <div className="space-y-2 text-sm">
+                {siteData.ga4.topCountries.slice(0, 5).map((c, i) => (
+                  <div key={i} className="flex justify-between">
+                    <span className="text-gray-600">{c.country}</span>
+                    <span className="font-medium">{c.users}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-gray-400 text-sm">暂无数据</p>
             )}
           </div>
         </div>
+      </div>
 
-        {/* 流量来源 */}
-        <div className="bg-white shadow rounded-lg">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-900">流量来源</h2>
+      {/* GSC Details */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">GSC 详细数据</h2>
+        <div className="grid md:grid-cols-2 gap-6">
+          <div>
+            <h3 className="font-medium text-gray-700 mb-2">概览</h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Clicks</span>
+                <span className="font-medium">{siteData.gsc.clicks.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Impressions</span>
+                <span className="font-medium">{siteData.gsc.impressions.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">CTR</span>
+                <span className="font-medium">{(siteData.gsc.ctr * 100).toFixed(2)}%</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Avg Position</span>
+                <span className="font-medium">{siteData.gsc.avgPosition.toFixed(1)}</span>
+              </div>
+            </div>
           </div>
-          <div className="px-6 py-4">
-            {data.topReferrers.length === 0 ? (
-              <p className="text-gray-500 text-center py-4">暂无数据</p>
-            ) : (
-              <ul className="divide-y divide-gray-200">
-                {data.topReferrers.map((ref, index) => (
-                  <li key={index} className="py-3 flex justify-between">
-                    <span className="text-sm text-gray-900">{ref.source}</span>
-                    <span className="text-sm text-gray-500">{ref.percentage.toFixed(1)}%</span>
-                  </li>
+
+          <div>
+            <h3 className="font-medium text-gray-700 mb-2">热门搜索词</h3>
+            {siteData.gsc.topQueries?.length > 0 ? (
+              <div className="space-y-2 text-sm">
+                {siteData.gsc.topQueries.slice(0, 5).map((q, i) => (
+                  <div key={i} className="flex justify-between">
+                    <span className="text-gray-600 truncate max-w-[150px]">{q.query}</span>
+                    <span className="font-medium">{q.clicks} clicks</span>
+                  </div>
                 ))}
-              </ul>
+              </div>
+            ) : (
+              <p className="text-gray-400 text-sm">暂无数据</p>
             )}
           </div>
-        </div>
 
-        {/* 设备分布 */}
-        <div className="bg-white shadow rounded-lg">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-900">设备分布</h2>
-          </div>
-          <div className="px-6 py-4">
-            {data.deviceStats.length === 0 ? (
-              <p className="text-gray-500 text-center py-4">暂无数据</p>
-            ) : (
-              <div className="space-y-4">
-                {data.deviceStats.map((stat, index) => (
-                  <div key={index}>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-gray-900 capitalize">{stat.device}</span>
-                      <span className="text-gray-500">{stat.percentage.toFixed(1)}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-primary-600 h-2 rounded-full"
-                        style={{ width: `${stat.percentage}%` }}
-                      />
+          <div className="md:col-span-2">
+            <h3 className="font-medium text-gray-700 mb-2">热门页面</h3>
+            {siteData.gsc.topPages?.length > 0 ? (
+              <div className="space-y-2 text-sm">
+                {siteData.gsc.topPages.slice(0, 5).map((p, i) => (
+                  <div key={i} className="flex justify-between items-center">
+                    <span className="text-gray-600 truncate max-w-[300px]">{p.page}</span>
+                    <div className="text-right">
+                      <span className="font-medium">{p.clicks} clicks</span>
+                      <span className="text-gray-400 ml-2">pos {p.position.toFixed(1)}</span>
                     </div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        </div>
-
-        {/* 每日趋势 */}
-        <div className="bg-white shadow rounded-lg">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-900">每日趋势（最近7天）</h2>
-          </div>
-          <div className="px-6 py-4">
-            {data.dailyStats.length === 0 ? (
-              <p className="text-gray-500 text-center py-4">暂无数据</p>
             ) : (
-              <div className="space-y-2">
-                {data.dailyStats.slice(-7).map((day, index) => (
-                  <div key={index} className="flex items-center justify-between text-sm">
-                    <span className="text-gray-500">{day.date}</span>
-                    <div className="flex space-x-4">
-                      <span className="text-gray-900">{day.pageViews} 浏览</span>
-                      <span className="text-gray-500">{day.visitors} 访客</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <p className="text-gray-400 text-sm">暂无数据</p>
             )}
           </div>
         </div>
       </div>
-
-      {/* 缓存信息 */}
-      {cachedData && (
-        <div className="mt-8 text-sm text-gray-500 text-center">
-          数据缓存时间: {new Date(cachedData.fetchedAt).toLocaleString('zh-CN')}
-          <br />
-          过期时间: {new Date(cachedData.expiresAt).toLocaleString('zh-CN')}
-        </div>
-      )}
     </div>
-  )
-}
-
-function StatCard({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="bg-white shadow rounded-lg p-6">
-      <p className="text-sm font-medium text-gray-500">{title}</p>
-      <p className="mt-2 text-3xl font-semibold text-gray-900">{value}</p>
-    </div>
-  )
-}
-
-function LoadingFallback() {
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="text-center py-12">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
-        <p className="mt-4 text-gray-500">加载中...</p>
-      </div>
-    </div>
-  )
-}
-
-export default function SiteDetailPage() {
-  return (
-    <Suspense fallback={<LoadingFallback />}>
-      <SiteDetailContent />
-    </Suspense>
   )
 }
