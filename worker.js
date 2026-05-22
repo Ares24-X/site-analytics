@@ -1,7 +1,7 @@
 // Cloudflare Worker - Site Analytics API
-// 自动抓取 GA4/GSC 数据并存储在 KV
+// 使用 jose 库代替 google-auth-library（Workers 兼容）
 
-import { JWT } from 'google-auth-library';
+import { SignJWT, importPKCS8 } from 'jose';
 
 // CORS 响应头
 const corsHeaders = {
@@ -15,103 +15,155 @@ function handleOptions() {
   return new Response(null, { headers: corsHeaders });
 }
 
-// 获取 Google Access Token
-async function getAccessToken(credentials) {
-  const jwtClient = new JWT({
-    email: credentials.client_email,
-    key: credentials.private_key,
-    scopes: [
-      'https://www.googleapis.com/auth/analytics.readonly',
-      'https://www.googleapis.com/auth/webmasters.readonly',
-    ],
+// 获取 Google Access Token（使用 jose 库）
+async function getAccessToken(credentials, scopes) {
+  const privateKey = await importPKCS8(credentials.privateKey, 'RS256');
+  
+  const now = Math.floor(Date.now() / 1000);
+  
+  const jwt = await new SignJWT({
+    scope: scopes.join(' '),
+    iss: credentials.clientEmail,
+    sub: credentials.clientEmail,
+    aud: 'https://oauth2.googleapis.com/token',
+  })
+    .setProtectedHeader({ alg: 'RS256', typ: 'JWT' })
+    .setIssuedAt(now)
+    .setExpirationTime(now + 3600)
+    .sign(privateKey);
+  
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }),
   });
   
-  const tokens = await jwtClient.authorize();
-  return tokens.access_token;
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Token error: ${error}`);
+  }
+  
+  const data = await response.json();
+  return data.access_token;
 }
 
 // 获取 GA4 数据
 async function fetchGA4Data(propertyId, accessToken, date) {
-  const response = await fetch(
-    `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        dateRanges: [{ startDate: date, endDate: date }],
-        metrics: [
-          { name: 'sessions' },
-          { name: 'activeUsers' },
-          { name: 'screenPageViews' },
-          { name: 'averageSessionDuration' },
-          { name: 'bounceRate' },
-        ],
-      }),
+  try {
+    const response = await fetch(
+      `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          dateRanges: [{ startDate: date, endDate: date }],
+          metrics: [
+            { name: 'sessions' },
+            { name: 'activeUsers' },
+            { name: 'screenPageViews' },
+            { name: 'averageSessionDuration' },
+            { name: 'bounceRate' },
+          ],
+        }),
+      }
+    );
+    
+    if (!response.ok) {
+      throw new Error(`GA4 API error: ${response.status}`);
     }
-  );
-  
-  if (!response.ok) {
-    throw new Error(`GA4 API error: ${response.status}`);
+    
+    const data = await response.json();
+    
+    const metrics = {
+      sessions: 0,
+      activeUsers: 0,
+      pageViews: 0,
+      avgSessionDuration: 0,
+      bounceRate: 0,
+    };
+    
+    if (data.rows && data.rows.length > 0) {
+      const row = data.rows[0];
+      metrics.sessions = parseInt(row.metricValues[0].value) || 0;
+      metrics.activeUsers = parseInt(row.metricValues[1].value) || 0;
+      metrics.pageViews = parseInt(row.metricValues[2].value) || 0;
+      metrics.avgSessionDuration = parseFloat(row.metricValues[3].value) || 0;
+      metrics.bounceRate = parseFloat(row.metricValues[4].value) || 0;
+    }
+    
+    return metrics;
+  } catch (error) {
+    console.error('GA4 error:', error);
+    return {
+      sessions: 0,
+      activeUsers: 0,
+      pageViews: 0,
+      avgSessionDuration: 0,
+      bounceRate: 0,
+    };
   }
-  
-  const data = await response.json();
-  
-  // 解析指标
-  const metrics = {};
-  if (data.rows && data.rows.length > 0) {
-    const row = data.rows[0];
-    metrics.sessions = parseInt(row.metricValues[0].value) || 0;
-    metrics.activeUsers = parseInt(row.metricValues[1].value) || 0;
-    metrics.pageViews = parseInt(row.metricValues[2].value) || 0;
-    metrics.avgSessionDuration = parseFloat(row.metricValues[3].value) || 0;
-    metrics.bounceRate = parseFloat(row.metricValues[4].value) || 0;
-  }
-  
-  return metrics;
 }
 
 // 获取 GSC 数据
 async function fetchGSCData(siteUrl, accessToken, date) {
-  const response = await fetch(
-    'https://searchconsole.googleapis.com/webmasters/v3/sites/' + 
-    encodeURIComponent(siteUrl) + '/searchAnalytics/query',
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        startDate: date,
-        endDate: date,
-        dimensions: ['query'],
-        rowLimit: 10,
-      }),
+  try {
+    const response = await fetch(
+      'https://searchconsole.googleapis.com/webmasters/v3/sites/' + 
+      encodeURIComponent(siteUrl) + '/searchAnalytics/query',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          startDate: date,
+          endDate: date,
+          dimensions: ['query'],
+          rowLimit: 10,
+        }),
+      }
+    );
+    
+    if (!response.ok) {
+      throw new Error(`GSC API error: ${response.status}`);
     }
-  );
-  
-  if (!response.ok) {
-    throw new Error(`GSC API error: ${response.status}`);
+    
+    const data = await response.json();
+    
+    return {
+      clicks: data.rows?.reduce((sum, r) => sum + (r.clicks || 0), 0) || 0,
+      impressions: data.rows?.reduce((sum, r) => sum + (r.impressions || 0), 0) || 0,
+      ctr: data.rows?.length > 0 
+        ? data.rows.reduce((sum, r) => sum + (r.ctr || 0), 0) / data.rows.length 
+        : 0,
+      avgPosition: data.rows?.length > 0 
+        ? data.rows.reduce((sum, r) => sum + (r.position || 0), 0) / data.rows.length 
+        : 0,
+      topQueries: data.rows?.slice(0, 5).map(r => ({
+        query: r.keys[0],
+        clicks: r.clicks,
+        impressions: r.impressions,
+        ctr: r.ctr,
+        position: r.position,
+      })) || [],
+    };
+  } catch (error) {
+    console.error('GSC error:', error);
+    return {
+      clicks: 0,
+      impressions: 0,
+      ctr: 0,
+      avgPosition: 0,
+      topQueries: [],
+    };
   }
-  
-  const data = await response.json();
-  
-  return {
-    clicks: data.rows?.reduce((sum, r) => sum + (r.clicks || 0), 0) || 0,
-    impressions: data.rows?.reduce((sum, r) => sum + (r.impressions || 0), 0) || 0,
-    ctr: data.rows?.reduce((sum, r) => sum + (r.ctr || 0), 0) / (data.rows?.length || 1) || 0,
-    avgPosition: data.rows?.reduce((sum, r) => sum + (r.position || 0), 0) / (data.rows?.length || 1) || 0,
-    topQueries: data.rows?.slice(0, 5).map(r => ({
-      query: r.keys[0],
-      clicks: r.clicks,
-      impressions: r.impressions,
-      ctr: r.ctr,
-      position: r.position,
-    })) || [],
-  };
 }
 
 // 同步单个站点数据
@@ -121,17 +173,20 @@ async function syncSite(siteConfig, env) {
   
   try {
     // 从环境变量获取凭证
-    const credentials = {
-      client_email: env[`${siteConfig.id}_CLIENT_EMAIL`],
-      private_key: env[`${siteConfig.id}_PRIVATE_KEY`]?.replace(/\\n/g, '\n'),
-    };
+    const clientEmail = env[`${siteConfig.id}_CLIENT_EMAIL`];
+    const privateKey = env[`${siteConfig.id}_PRIVATE_KEY`];
     
-    if (!credentials.client_email || !credentials.private_key) {
+    if (!clientEmail || !privateKey) {
       throw new Error('Missing credentials');
     }
     
+    const credentials = { clientEmail, privateKey };
+    
     // 获取 access token
-    const accessToken = await getAccessToken(credentials);
+    const accessToken = await getAccessToken(credentials, [
+      'https://www.googleapis.com/auth/analytics.readonly',
+      'https://www.googleapis.com/auth/webmasters.readonly',
+    ]);
     
     // 并行获取 GA4 和 GSC 数据
     const [ga4Data, gscData] = await Promise.all([
@@ -157,7 +212,7 @@ async function syncSite(siteConfig, env) {
     // 存储到 KV
     await env.SITE_ANALYTICS_KV.put(cacheKey, JSON.stringify(siteData));
     
-    return { success: true, siteId: siteConfig.id };
+    return { success: true, siteId: siteConfig.id, data: siteData };
   } catch (error) {
     return { success: false, siteId: siteConfig.id, error: error.message };
   }
