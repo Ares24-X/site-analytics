@@ -15,22 +15,53 @@ function handleOptions() {
   return new Response(null, { headers: corsHeaders });
 }
 
+// 硬编码凭证（从环境变量读取）
+function getCredentials(env, siteId) {
+  // 尝试从环境变量读取
+  const clientEmail = env[`${siteId}_CLIENT_EMAIL`];
+  let privateKey = env[`${siteId}_PRIVATE_KEY`];
+  
+  // 如果环境变量为空，使用硬编码（仅用于 pixelpdf）
+  if (siteId === 'pixelpdf') {
+    return {
+      clientEmail: clientEmail || 'ga4-753@my-project-rmgtlrx.iam.gserviceaccount.com',
+      privateKey: privateKey || `-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDiBpvd+VKk8Tal
+dPzkKVqcEkA0ZKZLH1nS0Gg6szOqWit6CmVxwPvGJazfJLbaPX9Rz5x2W5x9E2Ry
+jEQC3GsAiwaT7vTl4LQQ+bTDAvOv3xXWgayz3E7LiPFY09MtA+Uy6JLcZYqw5bMR
+GYZm/Vi89O846DTF9cK01KTufTURyBq314BvTRKBIjDA9qlne0tg0KzSwqs4O1cQ
+bJNRDeGKPkKqa4T7i2qROaHgGNW2FFOZ5Ylt4OlkUHRyab2i2aHqKSd/Tm+YIrI/
+8aoSqkIBWx/fYwfAuV6+0+abmy9w3lD8xwqrsS1IuYEYk+CqVpBQRWjLFcqOOXeg
+giSyL3Y7AgMBAAECggEARKRbK7NvLNZwkRkRQD1q3iEQzJiQhBn2TnaqYMFRfHe7
+4mlL25sPG2MPuAjPW0H366GQU8WIpdeA1uTQNso32Mdf7QdR6oouRUWAZwT7errW
+R/nDuC+84kUpfp9975rSPX6yMyrHTufDVPsafSaNj30XNYIXnNMBGafGmwL9XfOE
+NazOuxsKhKSV497GL8Mp5r0EOEble7La56mH8XjL67fU6Kx0XpTkfWnidMgQqGqM
+8hB6YRQMc/qU2Dj/QEKw2Uf178vB9XTuZprvsGZ5O2CZQXYr/vipvBneU7K6Gehb
+U1nxv/Ct2YrX/DqnW08mvEtfR/75j5DFGhTxzAL+KQKBgQD35WFwHUDQgaqSXLb4
+xZpCIxwIzjF/sGAr3eCDwjWFyidb3eMWRKww1hrnr0l3du0nGsO9J6NeF9ksyFUq
+iB1ANBZfQpVheui9jI0QmDObl4Q5hh4c7Xmk5SEI6aA7vyIslMyHKlaVI4Ksxt4r
+2D92n9/NdX3+YOZgfxoR3oGmdQKBgQDpajLQYfl1NQZfFwcBNVDnkY56gdUS2l0s
+h0qvtR00p6q/H/dvLUrlRcjYy2i/FNVGPTuK8G4RK4Zh9SWzg6r9hsflA3NbZsZg
+VtFsosJc3kWcbYWfPnYWEFfb8Ew+qTOHIPLzBgywh5OmgJ+gf6LFuwUUfkX8U60K
+kNvFsRTz7wKBgQCdGZw3jgJuYU509Rbr72bENTXmCq5p6p/4DOPk/GYpBKUO3j60
+9Q5e4MEqRPb9I7xFhPu5W254CgsTC16V1q8a6iendS3wGhF3VqRreNlz6IDeZ7Wb
+xY/KxX67BDwMwSNqN16q5lT6rQd6cYmJJcGKbuVJcwVG+afmTYZ6/pURpQKBgFR+
+qR5eGRugsknB4DtDvaHWQyl9zlAg1BHGd/bbLVNeTqUZQUzxrGcKuAYivCxPslTW
+3bMSDgYRJ3hWcetmAoP8QmhYs22m6rD9PJqC4LEVlUVnMDPRPJYIHIX1muQkBA8q
+kkf/LKDKs1xWu3IyQg4qAVDF1TfeYomsnqIV1GvpAoGAMZan23qPPJukUzjj7hZ3
+k+KgU9uBiibOQzrGLyogog23gbqEQ1jL6SblphFqwqku5fBMn5zAzcp2uavUmpfQ
+nAGvWmcm19xZ/1a/AIYvjuswzCEg7k0vm/ZamPiWqXQWxJLrG+TKRmObmt90o3Uy
+5qcBe6cXivIYvQXJMD3Ig0M=
+-----END PRIVATE KEY-----`,
+    };
+  }
+  
+  return { clientEmail, privateKey };
+}
+
 // 获取 Google Access Token（使用 jose 库）
 async function getAccessToken(credentials, scopes) {
-  // 修复私钥格式：确保有正确的换行符
-  let privateKey = credentials.privateKey;
-  if (!privateKey.includes('-----BEGIN')) {
-    // 如果私钥被 base64 编码了，先解码
-    try {
-      privateKey = atob(privateKey);
-    } catch (e) {
-      throw new Error('Invalid private key format');
-    }
-  }
-  // 确保换行符正确
-  privateKey = privateKey.replace(/\\n/g, '\n');
-  
-  const key = await importPKCS8(privateKey, 'RS256');
+  const key = await importPKCS8(credentials.privateKey, 'RS256');
   
   const now = Math.floor(Date.now() / 1000);
   
@@ -185,15 +216,12 @@ async function syncSite(siteConfig, env) {
   const cacheKey = `site_data_${siteConfig.id}_${date}`;
   
   try {
-    // 从环境变量获取凭证
-    const clientEmail = env[`${siteConfig.id}_CLIENT_EMAIL`];
-    const privateKey = env[`${siteConfig.id}_PRIVATE_KEY`];
+    // 获取凭证
+    const credentials = getCredentials(env, siteConfig.id);
     
-    if (!clientEmail || !privateKey) {
+    if (!credentials.clientEmail || !credentials.privateKey) {
       throw new Error('Missing credentials');
     }
-    
-    const credentials = { clientEmail, privateKey };
     
     // 获取 access token
     const accessToken = await getAccessToken(credentials, [
