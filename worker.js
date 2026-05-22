@@ -17,7 +17,20 @@ function handleOptions() {
 
 // 获取 Google Access Token（使用 jose 库）
 async function getAccessToken(credentials, scopes) {
-  const privateKey = await importPKCS8(credentials.privateKey, 'RS256');
+  // 修复私钥格式：确保有正确的换行符
+  let privateKey = credentials.privateKey;
+  if (!privateKey.includes('-----BEGIN')) {
+    // 如果私钥被 base64 编码了，先解码
+    try {
+      privateKey = atob(privateKey);
+    } catch (e) {
+      throw new Error('Invalid private key format');
+    }
+  }
+  // 确保换行符正确
+  privateKey = privateKey.replace(/\\n/g, '\n');
+  
+  const key = await importPKCS8(privateKey, 'RS256');
   
   const now = Math.floor(Date.now() / 1000);
   
@@ -30,7 +43,7 @@ async function getAccessToken(credentials, scopes) {
     .setProtectedHeader({ alg: 'RS256', typ: 'JWT' })
     .setIssuedAt(now)
     .setExpirationTime(now + 3600)
-    .sign(privateKey);
+    .sign(key);
   
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
