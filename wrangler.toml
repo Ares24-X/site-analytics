@@ -1,0 +1,13 @@
+name = "site-analytics-worker"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[triggers]
+crons = ["0 */6 * * *"]  # 每6小时运行一次
+
+[[kv_namespaces]]
+binding = "SITE_ANALYTICS_KV"
+id = "17cce0e0df4741ce8dd564325ac6193e"
+
+[vars]
+SITES_CONFIG = '[{"id":"pixelpdf","name":"PixelPDF","domain":"pixelpdf.win","ga4PropertyId":"14904304787","gscSiteUrl":"https://pixelpdf.win"}]'
