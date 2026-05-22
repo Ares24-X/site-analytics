@@ -72,16 +72,30 @@ export default function SiteDetailPage() {
     return `${m}m ${s}s`
   }
 
-  // 获取最近7天的日期
-  const getLast7Days = () => {
-    const dates = []
-    for (let i = 0; i < 7; i++) {
-      const d = new Date()
-      d.setDate(d.getDate() - i)
-      dates.push(d.toISOString().split('T')[0])
+  const [availableDates, setAvailableDates] = useState<string[]>([])
+
+  // 获取有数据的所有日期
+  useEffect(() => {
+    const fetchDates = async () => {
+      try {
+        const response = await fetch(`${WORKER_URL}/api/dates?siteId=${siteId}`)
+        if (response.ok) {
+          const result = await response.json()
+          setAvailableDates(result.dates)
+          // 如果有日期且当前日期不在列表中，选择最新的日期
+          if (result.dates.length > 0 && !result.dates.includes(date)) {
+            setDate(result.dates[0])
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch dates:', err)
+      }
     }
-    return dates
-  }
+    
+    if (siteId) {
+      fetchDates()
+    }
+  }, [siteId])
 
   if (loading) {
     return (
@@ -100,18 +114,25 @@ export default function SiteDetailPage() {
         <Link href="/" className="text-blue-600 hover:underline">← 返回仪表板</Link>
         <div className="mt-8 text-center py-12 bg-white rounded-lg shadow">
           <p className="text-gray-500">该日期暂无数据</p>
-          <div className="mt-4 flex justify-center gap-2">
-            {getLast7Days().map(d => (
-              <button
-                key={d}
-                onClick={() => setDate(d)}
-                className={`px-3 py-1 rounded text-sm ${
-                  d === date ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {d.slice(5)}
-              </button>
-            ))}
+          <div className="mt-4">
+            <p className="text-sm text-gray-500 mb-2">有数据的日期:</p>
+            <div className="flex flex-wrap justify-center gap-2 max-w-lg mx-auto">
+              {availableDates.length > 0 ? (
+                availableDates.map(d => (
+                  <button
+                    key={d}
+                    onClick={() => setDate(d)}
+                    className={`px-3 py-1 rounded text-sm ${
+                      d === date ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {d}
+                  </button>
+                ))
+              ) : (
+                <p className="text-gray-400 text-sm">暂无历史数据</p>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -135,9 +156,13 @@ export default function SiteDetailPage() {
               onChange={(e) => setDate(e.target.value)}
               className="border rounded-lg px-3 py-1 text-sm"
             >
-              {getLast7Days().map(d => (
-                <option key={d} value={d}>{d}</option>
-              ))}
+              {availableDates.length > 0 ? (
+                availableDates.map(d => (
+                  <option key={d} value={d}>{d}</option>
+                ))
+              ) : (
+                <option value={date}>{date}</option>
+              )}
             </select>
           </div>
         </div>

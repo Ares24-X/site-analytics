@@ -298,6 +298,37 @@ export default {
       );
     }
     
+    // API: 获取历史日期列表
+    if (path === '/api/dates' || path === '/api/dates/') {
+      const sites = JSON.parse(env.SITES_CONFIG || '[]');
+      const siteId = url.searchParams.get('siteId');
+      
+      // 获取 KV 中所有 key
+      const keys = [];
+      let cursor;
+      do {
+        const listResult = await env.SITE_ANALYTICS_KV.list({ cursor, prefix: siteId ? `site_data_${siteId}_` : 'site_data_' });
+        keys.push(...listResult.keys);
+        cursor = listResult.cursor;
+      } while (cursor);
+      
+      // 提取日期
+      const dates = keys
+        .map(k => k.name.split('_').pop())
+        .filter((d, i, arr) => arr.indexOf(d) === i) // 去重
+        .sort((a, b) => b.localeCompare(a)); // 降序
+      
+      return new Response(
+        JSON.stringify({ dates }),
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            ...corsHeaders,
+          },
+        }
+      );
+    }
+    
     // API: 手动触发同步
     if (path === '/api/sync' && request.method === 'POST') {
       const sites = JSON.parse(env.SITES_CONFIG || '[]');
